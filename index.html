@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Schülerzeitung Bewertung</title>
+  <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-firestore-compat.js"></script>
+  <style>
+    .star {
+      font-size: 2.5rem;
+      cursor: pointer;
+      color: #d1d5db;
+      transition: color 0.2s;
+    }
+    .star.active {
+      color: #f59e0b;
+    }
+  </style>
+</head>
+<body class="bg-gradient-to-br from-blue-100 to-white min-h-screen px-4 py-10 flex flex-col items-center justify-center font-sans">
+  <div class="absolute top-4 left-4">
+    <button id="adminToggle" class="bg-white border border-blue-500 text-blue-700 px-4 py-2 rounded-lg shadow-sm hover:bg-blue-50">Admin Login</button>
+    <div id="adminLogin" class="bg-white p-4 rounded-2xl shadow-lg w-72 space-y-2 mt-2 hidden">
+      <input id="username" class="w-full border rounded-lg px-3 py-2" placeholder="Benutzername">
+      <input id="password" class="w-full border rounded-lg px-3 py-2" type="password" placeholder="Passwort">
+      <p id="loginError" class="text-red-500 text-sm hidden">Falsche Login-Daten!</p>
+      <button id="loginBtn" class="w-full bg-blue-600 text-white rounded-lg py-2 hover:bg-blue-700">Einloggen</button>
+    </div>
+    <button id="logoutBtn" class="mt-2 bg-gray-200 px-3 py-1 rounded-lg text-sm hidden">Admin verlassen</button>
+  </div>
+
+  <h1 class="text-4xl font-bold mb-8 text-center text-blue-900">
+    Schulhaus Kreuzbühl<br>Schülerzeitung bewerten
+  </h1>
+
+  <div class="mb-6 flex gap-2 flex-wrap justify-center">
+    <button id="viewToggle" class="bg-blue-500 text-white px-5 py-2 rounded-full shadow hover:bg-blue-600">Alle Bewertungen anzeigen</button>
+    <button id="sortNeu" class="text-blue-600 underline hidden">Neueste zuerst</button>
+    <button id="sortAlt" class="text-blue-600 underline hidden">Älteste zuerst</button>
+    <button id="deleteAll" class="text-red-600 underline hidden">Alle löschen</button>
+  </div>
+
+  <div id="formView" class="w-full max-w-md bg-white rounded-2xl shadow-xl p-6">
+    <div class="flex justify-center gap-2 mb-4" id="stars"></div>
+    <textarea id="note" placeholder="Dein Feedback zur Schülerzeitung..." class="w-full border rounded-lg p-3 mb-4"></textarea>
+    <button id="submit" class="w-full bg-blue-600 text-white py-2 rounded-lg hover:bg-blue-700">Senden</button>
+    <p id="thanks" class="text-green-600 text-center mt-2 hidden">✅ Deine Bewertung wurde gespeichert!</p>
+  </div>
+
+  <div id="listView" class="w-full max-w-2xl hidden"></div>
+
+  <script>
+    const firebaseConfig = {
+      apiKey: "AIzaSyCbDFVOLPP0PRZ5p10k5eBF0b-EQTQwHUo",
+      authDomain: "schelerzeitung.firebaseapp.com",
+      projectId: "schelerzeitung",
+      storageBucket: "schelerzeitung.firebasestorage.app",
+      messagingSenderId: "361320553195",
+      appId: "1:361320553195:web:9008cb6dafcca7a5ff7cae",
+      measurementId: "G-51QKRRQ5F8"
+    };
+
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.firestore();
+
+    let rating = 0;
+    let admin = false;
+    let sortOrder = 'neu';
+
+    const starsEl = document.getElementById('stars');
+    const noteEl = document.getElementById('note');
+    const submitBtn = document.getElementById('submit');
+    const thanksEl = document.getElementById('thanks');
+    const viewToggleBtn = document.getElementById('viewToggle');
+    const formView = document.getElementById('formView');
+    const listView = document.getElementById('listView');
+    const sortNeu = document.getElementById('sortNeu');
+    const sortAlt = document.getElementById('sortAlt');
+    const deleteAll = document.getElementById('deleteAll');
+    const adminToggle = document.getElementById('adminToggle');
+    const adminLogin = document.getElementById('adminLogin');
+    const loginBtn = document.getElementById('loginBtn');
+    const logoutBtn = document.getElementById('logoutBtn');
+    const loginError = document.getElementById('loginError');
+    const usernameEl = document.getElementById('username');
+    const passwordEl = document.getElementById('password');
+
+    function drawStars() {
+      starsEl.innerHTML = '';
+      for (let i = 1; i <= 5; i++) {
+        const star = document.createElement('span');
+        star.textContent = '★';
+        star.className = 'star' + (i <= rating ? ' active' : '');
+        star.addEventListener('click', () => {
+          rating = i;
+          drawStars();
+        });
+        starsEl.appendChild(star);
+      }
+    }
+
+    async function saveFeedback() {
+      if (rating === 0 || noteEl.value.trim() === '') {
+        alert("Bitte Sterne auswählen und Feedback schreiben!");
+        return;
+      }
+      await db.collection("bewertungen").add({
+        rating,
+        note: noteEl.value.trim(),
+        timestamp: new Date().toISOString()
+      });
+      noteEl.value = '';
+      rating = 0;
+      drawStars();
+      thanksEl.classList.remove('hidden');
+      confetti({ particleCount: 100, spread: 70, origin: { y: 0.6 } });
+      setTimeout(() => thanksEl.classList.add('hidden'), 3000);
+      renderList();
+    }
+
+    async function renderList() {
+      const snapshot = await db.collection("bewertungen").get();
+      let data = snapshot.docs.map(doc => doc.data());
+      data.sort((a, b) => sortOrder === 'alt' ? new Date(a.timestamp) - new Date(b.timestamp) : new Date(b.timestamp) - new Date(a.timestamp));
+      listView.innerHTML = data.map((item, i) => `
+        <div class="bg-white rounded-2xl shadow p-4 mb-4 relative">
+          <div class="text-yellow-400 text-xl">${'★'.repeat(item.rating)}${'☆'.repeat(5 - item.rating)}</div>
+          <p class="text-gray-700 mt-2">${item.note}</p>
+          <p class="text-sm text-gray-400">${new Date(item.timestamp).toLocaleString()}</p>
+        </div>
+      `).join('');
+    }
+
+    submitBtn.onclick = saveFeedback;
+    viewToggleBtn.onclick = () => {
+      const showList = listView.classList.contains('hidden');
+      formView.classList.toggle('hidden', showList);
+      listView.classList.toggle('hidden', !showList);
+      sortNeu.classList.toggle('hidden', !showList);
+      sortAlt.classList.toggle('hidden', !showList);
+      viewToggleBtn.textContent = showList ? 'Neue Bewertung schreiben' : 'Alle Bewertungen anzeigen';
+      if (showList) renderList();
+    };
+
+    sortNeu.onclick = () => { sortOrder = 'neu'; renderList(); };
+    sortAlt.onclick = () => { sortOrder = 'alt'; renderList(); };
+
+    adminToggle.onclick = () => adminLogin.classList.toggle('hidden');
+    loginBtn.onclick = () => {
+      if (usernameEl.value === 'Kreuzbühl' && passwordEl.value === 'Zimmer7') {
+        admin = true;
+        loginError.classList.add('hidden');
+        adminLogin.classList.add('hidden');
+        logoutBtn.classList.remove('hidden');
+        deleteAll.classList.remove('hidden');
+        renderList();
+      } else {
+        loginError.classList.remove('hidden');
+      }
+    };
+
+    logoutBtn.onclick = () => {
+      admin = false;
+      logoutBtn.classList.add('hidden');
+      deleteAll.classList.add('hidden');
+      renderList();
+    };
+
+    drawStars();
+  </script>
+</body>
+</html>
